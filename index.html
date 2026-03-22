@@ -1,356 +1,275 @@
-import React, { useEffect, useMemo, useRef, useState } from "react"; import { motion } from "framer-motion"; import { Card, CardContent } from "@/components/ui/card"; import { Button } from "@/components/ui/button"; import { Progress } from "@/components/ui/progress"; import { Badge } from "@/components/ui/badge"; import { Car, Coins, Gauge, Play, RotateCcw, Trophy, Volume2, VolumeX } from "lucide-react";
-
-const GAME_WIDTH = 360; const GAME_HEIGHT = 640; const ROAD_WIDTH = 280; const LANE_COUNT = 3; const PLAYER_WIDTH = 44; const PLAYER_HEIGHT = 78; const OBSTACLE_WIDTH = 42; const OBSTACLE_HEIGHT = 76; const COIN_SIZE = 22;
-
-const laneX = (lane) => { const laneWidth = ROAD_WIDTH / LANE_COUNT; return lane * laneWidth + laneWidth / 2 - PLAYER_WIDTH / 2; };
-
-const obstacleLaneX = (lane) => { const laneWidth = ROAD_WIDTH / LANE_COUNT; return lane * laneWidth + laneWidth / 2 - OBSTACLE_WIDTH / 2; };
-
-const coinLaneX = (lane) => { const laneWidth = ROAD_WIDTH / LANE_COUNT; return lane * laneWidth + laneWidth / 2 - COIN_SIZE / 2; };
-
-const randomLane = () => Math.floor(Math.random() * LANE_COUNT);
-
-const carColors = [ "bg-red-500", "bg-blue-500", "bg-emerald-500", "bg-yellow-500", "bg-fuchsia-500", "bg-cyan-500", ];
-
-function PlayerCar({ x, shield, colorClass }) { return ( <motion.div animate={{ x }} transition={{ type: "spring", stiffness: 300, damping: 20 }} className={absolute bottom-5 left-0 h-[78px] w-[44px] rounded-2xl border-2 border-white/80 shadow-xl ${colorClass}} style={{ transform: translateX(${x}px) }} > <div className="absolute left-1 right-1 top-2 h-5 rounded-lg bg-white/70" /> <div className="absolute -left-1 top-3 h-4 w-2 rounded bg-slate-900" /> <div className="absolute -right-1 top-3 h-4 w-2 rounded bg-slate-900" /> <div className="absolute -left-1 bottom-3 h-4 w-2 rounded bg-slate-900" /> <div className="absolute -right-1 bottom-3 h-4 w-2 rounded bg-slate-900" /> <div className="absolute left-1/2 top-10 h-5 w-2 -translate-x-1/2 rounded bg-slate-900/40" /> {shield && ( <motion.div animate={{ scale: [1, 1.08, 1] }} transition={{ repeat: Infinity, duration: 1.2 }} className="absolute inset-[-8px] rounded-[24px] border-2 border-cyan-300/90 shadow-[0_0_20px_rgba(103,232,249,0.7)]" /> )} </motion.div> ); }
-
-function EnemyCar({ lane, y, variant = 0 }) { const variants = ["bg-slate-800", "bg-orange-500", "bg-violet-500", "bg-green-600"]; return ( <div className={absolute h-[76px] w-[42px] rounded-2xl border border-white/60 ${variants[variant % variants.length]}} style={{ left: obstacleLaneX(lane), top: y }} > <div className="absolute left-1 right-1 top-2 h-5 rounded-lg bg-white/60" /> <div className="absolute -left-1 top-3 h-4 w-2 rounded bg-slate-950" /> <div className="absolute -right-1 top-3 h-4 w-2 rounded bg-slate-950" /> <div className="absolute -left-1 bottom-3 h-4 w-2 rounded bg-slate-950" /> <div className="absolute -right-1 bottom-3 h-4 w-2 rounded bg-slate-950" /> </div> ); }
-
-function Coin({ lane, y }) { return ( <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.6, ease: "linear" }} className="absolute flex h-[22px] w-[22px] items-center justify-center rounded-full border border-yellow-200 bg-yellow-400 text-[10px] font-bold text-yellow-900 shadow-lg" style={{ left: coinLaneX(lane), top: y }} > C </motion.div> ); }
-
-function RoadDecor({ offset }) { const laneWidth = ROAD_WIDTH / LANE_COUNT; return ( <div className="absolute inset-0 overflow-hidden rounded-[32px]"> {[1, 2].map((divider) => ( <div key={divider} className="absolute top-0 h-full w-[4px]" style={{ left: divider * laneWidth - 2 }} > {Array.from({ length: 12 }).map((_, i) => ( <div key={i} className="absolute left-0 h-12 w-full rounded-full bg-white/70" style={{ top: (i * 70 + offset) % (GAME_HEIGHT + 80) - 40 }} /> ))} </div> ))}
-
-{Array.from({ length: 10 }).map((_, i) => (
-    <div
-      key={`light-left-${i}`}
-      className="absolute left-2 h-5 w-2 rounded-full bg-amber-300/80 shadow-[0_0_10px_rgba(252,211,77,0.7)]"
-      style={{ top: (i * 70 + offset * 0.8) % (GAME_HEIGHT + 50) - 25 }}
-    />
-  ))}
-  {Array.from({ length: 10 }).map((_, i) => (
-    <div
-      key={`light-right-${i}`}
-      className="absolute right-2 h-5 w-2 rounded-full bg-amber-300/80 shadow-[0_0_10px_rgba(252,211,77,0.7)]"
-      style={{ top: (i * 70 + offset * 0.8) % (GAME_HEIGHT + 50) - 25 }}
-    />
-  ))}
-</div>
-
-); }
-
-function rectsOverlap(a, b) { return ( a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y ); }
-
-function createBeep(freq = 420, duration = 0.08, type = "square", gainValue = 0.03) { const AudioCtx = window.AudioContext || window.webkitAudioContext; if (!AudioCtx) return null; const ctx = new AudioCtx(); return () => { const oscillator = ctx.createOscillator(); const gain = ctx.createGain(); oscillator.type = type; oscillator.frequency.value = freq; gain.gain.value = gainValue; oscillator.connect(gain); gain.connect(ctx.destination); oscillator.start(); oscillator.stop(ctx.currentTime + duration); }; }
-
-export default function AdvancedCarGame() { const [started, setStarted] = useState(false); const [paused, setPaused] = useState(false); const [gameOver, setGameOver] = useState(false); const [lane, setLane] = useState(1); const [obstacles, setObstacles] = useState([]); const [coins, setCoins] = useState([]); const [score, setScore] = useState(0); const [coinScore, setCoinScore] = useState(0); const [bestScore, setBestScore] = useState(0); const [speed, setSpeed] = useState(5.5); const [roadOffset, setRoadOffset] = useState(0); const [shield, setShield] = useState(false); const [shieldMeter, setShieldMeter] = useState(0); const [muted, setMuted] = useState(false); const [carStyle, setCarStyle] = useState(0); const [mode, setMode] = useState("normal"); const frameRef = useRef(null); const spawnTick = useRef(0); const coinTick = useRef(0); const scoreTick = useRef(0); const shieldTimeout = useRef(null); const bestScoreLoaded = useRef(false);
-
-const moveSound = useMemo(() => (typeof window !== "undefined" ? createBeep(560, 0.05, "square", 0.02) : null), []); const coinSound = useMemo(() => (typeof window !== "undefined" ? createBeep(820, 0.06, "triangle", 0.03) : null), []); const crashSound = useMemo(() => (typeof window !== "undefined" ? createBeep(150, 0.2, "sawtooth", 0.04) : null), []);
-
-useEffect(() => { const saved = localStorage.getItem("advanced-car-best-score"); if (saved && !bestScoreLoaded.current) { setBestScore(Number(saved)); bestScoreLoaded.current = true; } }, []);
-
-useEffect(() => { localStorage.setItem("advanced-car-best-score", String(bestScore)); }, [bestScore]);
-
-const difficultyMultiplier = mode === "hard" ? 1.35 : mode === "easy" ? 0.85 : 1;
-
-const resetGame = () => { setLane(1); setObstacles([]); setCoins([]); setScore(0); setCoinScore(0); setSpeed(mode === "hard" ? 7 : mode === "easy" ? 4.8 : 5.5); setRoadOffset(0); setShield(false); setShieldMeter(0); setGameOver(false); setPaused(false); spawnTick.current = 0; coinTick.current = 0; scoreTick.current = 0; if (shieldTimeout.current) clearTimeout(shieldTimeout.current); };
-
-const startGame = () => { resetGame(); setStarted(true); };
-
-const activateShield = () => { if (shieldMeter < 100 || shield) return; setShield(true); setShieldMeter(0); if (shieldTimeout.current) clearTimeout(shieldTimeout.current); shieldTimeout.current = setTimeout(() => setShield(false), 4000); };
-
-const playFx = (fn) => { if (!muted && fn) { try { fn(); } catch { // ignore audio gesture errors } } };
-
-const moveLeft = () => { setLane((prev) => { const next = Math.max(0, prev - 1); if (next !== prev) playFx(moveSound); return next; }); };
-
-const moveRight = () => { setLane((prev) => { const next = Math.min(LANE_COUNT - 1, prev + 1); if (next !== prev) playFx(moveSound); return next; }); };
-
-useEffect(() => { const handleKey = (e) => { if (!started || gameOver) { if (e.key === "Enter") startGame(); return; } if (e.key === "ArrowLeft" || e.key.toLowerCase() === "a") moveLeft(); if (e.key === "ArrowRight" || e.key.toLowerCase() === "d") moveRight(); if (e.key === " ") setPaused((p) => !p); if (e.key.toLowerCase() === "s") activateShield(); };
-
-window.addEventListener("keydown", handleKey);
-return () => window.removeEventListener("keydown", handleKey);
-
-}, [started, gameOver, shieldMeter, shield, muted]);
-
-useEffect(() => { if (!started || paused || gameOver) { if (frameRef.current) cancelAnimationFrame(frameRef.current); return; }
-
-let last = performance.now();
-
-const loop = (now) => {
-  const delta = Math.min(32, now - last);
-  last = now;
-
-  setRoadOffset((prev) => (prev + speed * 2.4 * difficultyMultiplier) % 70);
-
-  spawnTick.current += delta;
-  coinTick.current += delta;
-  scoreTick.current += delta;
-
-  const spawnEvery = Math.max(450, 980 - score * 4);
-  const coinEvery = 1400;
-
-  if (spawnTick.current > spawnEvery / difficultyMultiplier) {
-    spawnTick.current = 0;
-    setObstacles((prev) => [
-      ...prev,
-      { id: Math.random(), lane: randomLane(), y: -OBSTACLE_HEIGHT, variant: Math.floor(Math.random() * 4) },
-    ]);
-  }
-
-  if (coinTick.current > coinEvery) {
-    coinTick.current = 0;
-    setCoins((prev) => [...prev, { id: Math.random(), lane: randomLane(), y: -COIN_SIZE }]);
-  }
-
-  if (scoreTick.current > 220) {
-    scoreTick.current = 0;
-    setScore((prev) => prev + 1);
-    setSpeed((prev) => Math.min(12.5, prev + 0.035));
-    setShieldMeter((prev) => Math.min(100, prev + 1.5));
-  }
-
-  const playerRect = {
-    x: laneX(lane),
-    y: GAME_HEIGHT - PLAYER_HEIGHT - 20,
-    w: PLAYER_WIDTH,
-    h: PLAYER_HEIGHT,
-  };
-
-  setObstacles((prev) => {
-    const moved = prev
-      .map((o) => ({ ...o, y: o.y + speed * 1.9 * difficultyMultiplier }))
-      .filter((o) => o.y < GAME_HEIGHT + 100);
-
-    let crashed = false;
-    const survivors = [];
-
-    for (const o of moved) {
-      const obstacleRect = {
-        x: obstacleLaneX(o.lane),
-        y: o.y,
-        w: OBSTACLE_WIDTH,
-        h: OBSTACLE_HEIGHT,
-      };
-
-      if (rectsOverlap(playerRect, obstacleRect)) {
-        if (shield) {
-          setShield(false);
-          continue;
-        }
-        crashed = true;
-      } else {
-        survivors.push(o);
-      }
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Car Racing Game</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
     }
 
-    if (crashed) {
-      setGameOver(true);
-      setBestScore((prevBest) => Math.max(prevBest, score));
-      playFx(crashSound);
-      return survivors;
+    body {
+      background: #222;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+      text-align: center;
+      color: white;
     }
 
-    return survivors;
-  });
-
-  setCoins((prev) => {
-    const moved = prev
-      .map((c) => ({ ...c, y: c.y + speed * 1.5 * difficultyMultiplier }))
-      .filter((c) => c.y < GAME_HEIGHT + 50);
-
-    const remaining = [];
-    for (const c of moved) {
-      const coinRect = { x: coinLaneX(c.lane), y: c.y, w: COIN_SIZE, h: COIN_SIZE };
-      if (rectsOverlap(playerRect, coinRect)) {
-        setCoinScore((v) => v + 1);
-        setShieldMeter((prevMeter) => Math.min(100, prevMeter + 10));
-        playFx(coinSound);
-      } else {
-        remaining.push(c);
-      }
+    h1 {
+      margin: 15px 0;
     }
-    return remaining;
-  });
 
-  frameRef.current = requestAnimationFrame(loop);
-};
+    .game-container {
+      position: relative;
+      width: 360px;
+      height: 600px;
+      margin: 10px auto;
+      background: #444;
+      overflow: hidden;
+      border: 4px solid white;
+      border-radius: 10px;
+    }
 
-frameRef.current = requestAnimationFrame(loop);
-return () => {
-  if (frameRef.current) cancelAnimationFrame(frameRef.current);
-};
+    .road {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      background: #555;
+    }
 
-}, [started, paused, gameOver, lane, speed, shield, score, mode, muted]);
+    .line {
+      position: absolute;
+      width: 10px;
+      height: 80px;
+      background: white;
+      left: 50%;
+      transform: translateX(-50%);
+    }
 
-const playerX = laneX(lane);
+    .player-car {
+      position: absolute;
+      width: 50px;
+      height: 90px;
+      background: red;
+      bottom: 20px;
+      left: 155px;
+      border-radius: 10px;
+    }
 
-return ( <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 p-4 text-white"> <div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[360px_1fr]"> <Card className="border-white/10 bg-white/5 shadow-2xl backdrop-blur"> <CardContent className="p-4"> <div className="mb-4 flex items-center justify-between"> <div> <h1 className="text-2xl font-bold tracking-tight">Advanced Car Game</h1> <p className="text-sm text-white/70">Dodge cars, collect coins, use shield.</p> </div> <Button variant="outline" className="border-white/20 bg-white/5 text-white hover:bg-white/10" onClick={() => setMuted((m) => !m)}> {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />} </Button> </div>
+    .enemy-car {
+      position: absolute;
+      width: 50px;
+      height: 90px;
+      background: yellow;
+      top: -100px;
+      border-radius: 10px;
+    }
 
-<div
-          className="relative mx-auto overflow-hidden rounded-[32px] border border-white/10 bg-slate-700 shadow-[0_20px_80px_rgba(0,0,0,0.45)]"
-          style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}
-        >
-          <div className="absolute inset-y-0 left-0 w-[40px] bg-green-700/80" />
-          <div className="absolute inset-y-0 right-0 w-[40px] bg-green-700/80" />
+    .score-board {
+      font-size: 22px;
+      margin: 10px 0;
+    }
 
-          <div className="absolute left-1/2 top-0 h-full -translate-x-1/2 rounded-[32px] bg-slate-800" style={{ width: ROAD_WIDTH }}>
-            <RoadDecor offset={roadOffset} />
+    .controls {
+      margin-top: 15px;
+    }
 
-            {coins.map((coin) => (
-              <Coin key={coin.id} lane={coin.lane} y={coin.y} />
-            ))}
+    button {
+      padding: 12px 18px;
+      margin: 5px;
+      font-size: 18px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
 
-            {obstacles.map((obstacle) => (
-              <EnemyCar key={obstacle.id} lane={obstacle.lane} y={obstacle.y} variant={obstacle.variant} />
-            ))}
+    .start-btn {
+      background: limegreen;
+      color: white;
+    }
 
-            <PlayerCar x={playerX} shield={shield} colorClass={carColors[carStyle]} />
-          </div>
+    .left-btn, .right-btn {
+      background: dodgerblue;
+      color: white;
+      width: 100px;
+    }
 
-          {!started && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 p-6 text-center">
-              <Car className="mb-4 h-14 w-14" />
-              <h2 className="text-3xl font-bold">Ready to race?</h2>
-              <p className="mt-2 max-w-xs text-sm text-white/75">
-                Arrow keys ya buttons se move karo. Coins collect karo. Shield ke liye S dabao.
-              </p>
-              <Button className="mt-5 rounded-2xl" onClick={startGame}>
-                <Play className="mr-2 h-4 w-4" /> Start Game
-              </Button>
-            </div>
-          )}
+    .game-over {
+      position: absolute;
+      top: 45%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.8);
+      padding: 20px;
+      border-radius: 10px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>Car Racing Game</h1>
+  <div class="score-board">Score: <span id="score">0</span></div>
 
-          {paused && started && !gameOver && (
-            <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70 text-center">
-              <div>
-                <h3 className="text-3xl font-bold">Paused</h3>
-                <p className="mt-2 text-white/75">Space dabao aur continue karo</p>
-              </div>
-            </div>
-          )}
-
-          {gameOver && (
-            <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80 p-6 text-center">
-              <div>
-                <h3 className="text-3xl font-bold text-red-400">Game Over</h3>
-                <p className="mt-3 text-lg">Score: {score}</p>
-                <p className="text-white/75">Best: {Math.max(bestScore, score)}</p>
-                <div className="mt-5 flex justify-center gap-3">
-                  <Button className="rounded-2xl" onClick={startGame}>
-                    <RotateCcw className="mr-2 h-4 w-4" /> Restart
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="absolute left-3 top-3 flex flex-col gap-2">
-            <Badge className="w-fit bg-black/40 text-white">Score: {score}</Badge>
-            <Badge className="w-fit bg-black/40 text-white">Coins: {coinScore}</Badge>
-            <Badge className="w-fit bg-black/40 text-white">Speed: {speed.toFixed(1)}</Badge>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-
-    <div className="grid gap-4">
-      <Card className="border-white/10 bg-white/5 text-white shadow-2xl backdrop-blur">
-        <CardContent className="grid gap-4 p-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-            <div className="mb-2 flex items-center gap-2 text-white/70"><Trophy className="h-4 w-4" /> Best Score</div>
-            <div className="text-3xl font-bold">{bestScore}</div>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-            <div className="mb-2 flex items-center gap-2 text-white/70"><Coins className="h-4 w-4" /> Coins</div>
-            <div className="text-3xl font-bold">{coinScore}</div>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-            <div className="mb-2 flex items-center gap-2 text-white/70"><Gauge className="h-4 w-4" /> Speed</div>
-            <div className="text-3xl font-bold">{speed.toFixed(1)}</div>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-            <div className="mb-2 text-white/70">Shield Charge</div>
-            <Progress value={shieldMeter} className="mt-3" />
-            <div className="mt-2 text-sm text-white/70">{Math.floor(shieldMeter)}%</div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-white/10 bg-white/5 text-white shadow-2xl backdrop-blur">
-        <CardContent className="grid gap-4 p-4 md:grid-cols-2">
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-            <h3 className="mb-3 text-lg font-semibold">Controls</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <Button className="rounded-2xl" onClick={moveLeft}>Left</Button>
-              <Button className="rounded-2xl" onClick={moveRight}>Right</Button>
-              <Button className="rounded-2xl" variant="secondary" onClick={() => setPaused((p) => !p)}>
-                {paused ? "Resume" : "Pause"}
-              </Button>
-              <Button className="rounded-2xl" variant="secondary" onClick={activateShield} disabled={shieldMeter < 100 || shield}>
-                {shield ? "Shield On" : "Use Shield"}
-              </Button>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-            <h3 className="mb-3 text-lg font-semibold">Customize</h3>
-            <div className="mb-3 flex flex-wrap gap-2">
-              {carColors.map((color, i) => (
-                <button
-                  key={i}
-                  onClick={() => setCarStyle(i)}
-                  className={`h-9 w-9 rounded-full border-2 ${color} ${carStyle === i ? "border-white" : "border-transparent"}`}
-                />
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {[
-                { key: "easy", label: "Easy" },
-                { key: "normal", label: "Normal" },
-                { key: "hard", label: "Hard" },
-              ].map((item) => (
-                <Button
-                  key={item.key}
-                  variant={mode === item.key ? "default" : "outline"}
-                  className="rounded-2xl border-white/20 bg-white/5 text-white hover:bg-white/10"
-                  onClick={() => {
-                    setMode(item.key);
-                    if (!started || gameOver) {
-                      setSpeed(item.key === "hard" ? 7 : item.key === "easy" ? 4.8 : 5.5);
-                    }
-                  }}
-                >
-                  {item.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-white/10 bg-white/5 text-white shadow-2xl backdrop-blur">
-        <CardContent className="p-4">
-          <h3 className="mb-3 text-lg font-semibold">Features included</h3>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {[
-              "3-lane racing",
-              "Obstacle cars",
-              "Coin collection",
-              "Speed increase",
-              "Shield power",
-              "Best score save",
-              "Sound on/off",
-              "Easy/Normal/Hard",
-              "Mobile buttons",
-            ].map((item) => (
-              <motion.div key={item} whileHover={{ y: -2 }} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-white/85">
-                {item}
-              </motion.div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+  <div class="game-container" id="game">
+    <div class="road" id="road"></div>
+    <div class="player-car" id="player"></div>
+    <div class="game-over" id="gameOver">
+      <h2>Game Over</h2>
+      <p>Your Score: <span id="finalScore">0</span></p>
     </div>
   </div>
-</div>
 
-); }
+  <div class="controls">
+    <button class="start-btn" onclick="startGame()">Start Game</button><br>
+    <button class="left-btn" onclick="moveLeft()">Left</button>
+    <button class="right-btn" onclick="moveRight()">Right</button>
+  </div>
+
+  <script>
+    const game = document.getElementById("game");
+    const player = document.getElementById("player");
+    const scoreDisplay = document.getElementById("score");
+    const gameOverBox = document.getElementById("gameOver");
+    const finalScore = document.getElementById("finalScore");
+
+    let playerX = 155;
+    let score = 0;
+    let gameRunning = false;
+    let enemyCars = [];
+    let roadLines = [];
+    let animationId;
+    let speed = 5;
+
+    function createRoadLines() {
+      for (let i = 0; i < 6; i++) {
+        const line = document.createElement("div");
+        line.classList.add("line");
+        line.style.top = i * 120 + "px";
+        game.appendChild(line);
+        roadLines.push(line);
+      }
+    }
+
+    function createEnemyCar() {
+      const enemy = document.createElement("div");
+      enemy.classList.add("enemy-car");
+      enemy.style.left = Math.floor(Math.random() * 6) * 50 + 30 + "px";
+      enemy.style.top = "-100px";
+      game.appendChild(enemy);
+      enemyCars.push(enemy);
+    }
+
+    function moveRoadLines() {
+      roadLines.forEach((line) => {
+        let top = parseInt(line.style.top);
+        top += speed;
+        if (top > 600) {
+          top = -80;
+        }
+        line.style.top = top + "px";
+      });
+    }
+
+    function moveEnemyCars() {
+      for (let i = 0; i < enemyCars.length; i++) {
+        let enemy = enemyCars[i];
+        let top = parseInt(enemy.style.top);
+        top += speed;
+        enemy.style.top = top + "px";
+
+        if (checkCollision(player, enemy)) {
+          endGame();
+          return;
+        }
+
+        if (top > 600) {
+          enemy.remove();
+          enemyCars.splice(i, 1);
+          i--;
+          score++;
+          scoreDisplay.innerText = score;
+
+          if (score % 5 === 0) {
+            speed += 1;
+          }
+
+          createEnemyCar();
+        }
+      }
+    }
+
+    function checkCollision(a, b) {
+      const aRect = a.getBoundingClientRect();
+      const bRect = b.getBoundingClientRect();
+
+      return !(
+        aRect.bottom < bRect.top ||
+        aRect.top > bRect.bottom ||
+        aRect.right < bRect.left ||
+        aRect.left > bRect.right
+      );
+    }
+
+    function gameLoop() {
+      if (!gameRunning) return;
+
+      moveRoadLines();
+      moveEnemyCars();
+      animationId = requestAnimationFrame(gameLoop);
+    }
+
+    function startGame() {
+      cancelAnimationFrame(animationId);
+
+      document.querySelectorAll(".enemy-car").forEach(car => car.remove());
+      document.querySelectorAll(".line").forEach(line => line.remove());
+
+      enemyCars = [];
+      roadLines = [];
+      score = 0;
+      speed = 5;
+      playerX = 155;
+      player.style.left = playerX + "px";
+      scoreDisplay.innerText = score;
+      gameOverBox.style.display = "none";
+
+      createRoadLines();
+      createEnemyCar();
+      createEnemyCar();
+
+      gameRunning = true;
+      gameLoop();
+    }
+
+    function endGame() {
+      gameRunning = false;
+      finalScore.innerText = score;
+      gameOverBox.style.display = "block";
+    }
+
+    function moveLeft() {
+      if (playerX > 30) {
+        playerX -= 25;
+        player.style.left = playerX + "px";
+      }
+    }
+
+    function moveRight() {
+      if (playerX < 280) {
+        playerX += 25;
+        player.style.left = playerX + "px";
+      }
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (!gameRunning) return;
+      if (e.key === "ArrowLeft") moveLeft();
+      if (e.key === "ArrowRight") moveRight();
+    });
+  </script>
+</body>
+</html>
